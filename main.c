@@ -8,6 +8,9 @@
 #define LAYER_NEURON_COUNT (int[]){784, 16, 16, 10}
 #define EULER_NUMBER 2.71828182845904523536
 
+#define MINI_BATCH_SIZE 100
+#define LEARNING_RATE 3
+
 #define ASCII_CHARSET_LEN 71
 #define ASCII_CHARSET_MAX_VALUE (ASCII_CHARSET_LEN - 1)
 #define ASCII_CHARSET "$@B%%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
@@ -44,38 +47,31 @@ void print_image(int label, double *image)
     }
 }
 
-double sigmoid(double n)
+double sigmoid(double x)
 {
-    return (1 / (1 + pow(EULER_NUMBER, -n)));
+    return (1.0 / (1.0 + powl(EULER_NUMBER, -x)));
 }
 
-double sigmoid_derivative(double n)
+double sigmoid_derivative(double x)
 {
-    return sigmoid(n) * (1 - sigmoid(n));
+    // if (n > 1) {
+    //     printf("PLER %.10e %.10e %.10e\n", n, sigmoid(n), sigmoid(n) * (1 - sigmoid(n)));
+    // }
+    return sigmoid(x) * (1.0 - sigmoid(x));
 }
 
-double sigmoid_inverse(double n)
+double sigmoid_inverse(double x)
 {
-    return logl(n / (1 - n));
+    return logl(x / (1.0 - x));
 }
 
-feedforward_result_t *feedforward(double *input, nn_parameters_t *nn_parameters)
+void feedforward(double *input, nn_parameters_t *nn_parameters, feedforward_result_t *result)
 {
-    feedforward_result_t *result = (feedforward_result_t *)calloc(1, sizeof(feedforward_result_t));
-
-    result->activation_matrices = (double **)calloc(LAYER_COUNT, sizeof(double *));
-    result->z_matrices = (double **)calloc(LAYER_COUNT, sizeof(double *));
-
-    for (int i = 0; i < LAYER_COUNT; i++)
-    {
-        result->activation_matrices[i] = (double *)calloc(LAYER_NEURON_COUNT[i], sizeof(double));
-        result->z_matrices[i] = (double *)calloc(LAYER_NEURON_COUNT[i], sizeof(double));
-    }
-
     for (int i = 0; i < LAYER_NEURON_COUNT[0]; i++)
     {
         result->activation_matrices[0][i] = input[i];
         result->z_matrices[0][i] = sigmoid_inverse(input[i]);
+        // printf("PLER %lf", sigmoid_inverse(input[i]));
     }
 
     // print_image(3, input);
@@ -104,7 +100,6 @@ feedforward_result_t *feedforward(double *input, nn_parameters_t *nn_parameters)
         //     printf("%f\n", result->activation_matrices[i][j]);
         // }
     }
-    return result;
 }
 
 void free_feedforward_result(feedforward_result_t *ff_result)
@@ -119,66 +114,82 @@ void free_feedforward_result(feedforward_result_t *ff_result)
     free(ff_result);
 }
 
-backprop_result_t *backprop(double **activation_matrices, double **z_matrices, double **weight_matrices, double *expected_result)
+void backprop(double **activation_matrices, double **z_matrices, double **weight_matrices, double *expected_result, backprop_result_t *result)
 {
-    backprop_result_t *result = (backprop_result_t *)calloc(1, sizeof(backprop_result_t));
-
-    result->weight_gradients = (double **)calloc(LAYER_COUNT - 1, sizeof(double *));
-    result->bias_gradients = (double **)calloc(LAYER_COUNT - 1, sizeof(double *));
-
     double **ca_matrices = (double **)calloc(LAYER_COUNT - 1, sizeof(double *));
-
     for (int i = 0; i < LAYER_COUNT - 1; i++)
     {
-        size_t bias_size = LAYER_NEURON_COUNT[i + 1];
-        size_t weights_size = LAYER_NEURON_COUNT[i] * LAYER_NEURON_COUNT[i + 1];
-
-        result->weight_gradients[i] = (double *)calloc(weights_size, sizeof(double));
-        result->bias_gradients[i] = (double *)calloc(bias_size, sizeof(double));
-        ca_matrices[i] = (double *)calloc(bias_size, sizeof(double));
+        ca_matrices[i] = (double *)calloc(LAYER_NEURON_COUNT[i + 1], sizeof(double));
     }
 
     for (int i = 0; i < LAYER_NEURON_COUNT[LAYER_COUNT - 1]; i++)
     {
-        ca_matrices[LAYER_COUNT - 2][i] = 2 * (activation_matrices[LAYER_COUNT - 1][i] - expected_result[i], 2);
+        ca_matrices[LAYER_COUNT - 2][i] = (activation_matrices[LAYER_COUNT - 1][i] - expected_result[i]) *
+                                          sigmoid_derivative(z_matrices[LAYER_COUNT - 1][i]);
+        // if (ca_matrices[LAYER_COUNT - 2][i] != 0.0) {
+        // printf("PLER %.10e %.10e\n", sigmoid_derivative(z_matrices[LAYER_COUNT - 1][i]), ca_matrices[LAYER_COUNT - 2][i]);
+        // }
     }
     for (int i = LAYER_COUNT - 2; i >= 1; i--)
     {
-        size_t cur_neuron_count = LAYER_NEURON_COUNT[i + 1];
-        size_t prev_neuron_count = LAYER_NEURON_COUNT[i];
-        for (int k = 0; k < prev_neuron_count; k++)
+        size_t cur_neuron_count = LAYER_NEURON_COUNT[i];
+        size_t next_neuron_count = LAYER_NEURON_COUNT[i + 1];
+
+        for (int k = 0; k < cur_neuron_count; k++)
         {
             double sum = 0;
-            for (int j = 0; j < cur_neuron_count; j++)
+            for (int j = 0; j < next_neuron_count; j++)
             {
-                sum += weight_matrices[i][cur_neuron_count * j + k] * sigmoid_derivative(z_matrices[i][j]) * ca_matrices[i][j];
+                sum += weight_matrices[i][cur_neuron_count * k + j] * ca_matrices[i][j];
+                // if (sum == 0) {
+                //     printf("PEDAH %.10e %.10e\n", weight_matrices[i][cur_neuron_count * k + j], ca_matrices[i][j]);
+                // }
             }
-            ca_matrices[i - 1][k] = sum;
+            ca_matrices[i - 1][k] = sum * sigmoid_derivative(z_matrices[i][k]);
+            // if (i == 2) {
+            //     printf("%d %d %.10e %.10e %.10e %.10e\n", i, k, sum, z_matrices[i][k], ca_matrices[i-1][k], sigmoid_derivative(z_matrices[i][k]));
+            // }
         }
+        // exit(0);
     }
 
     for (int i = LAYER_COUNT - 2; i >= 1; i--)
     {
-        size_t cur_neuron_count = LAYER_NEURON_COUNT[i + 1];
-        size_t prev_neuron_count = LAYER_NEURON_COUNT[i];
-        for (int j = 0; j < cur_neuron_count; j++)
+        size_t next_neuron_count = LAYER_NEURON_COUNT[i + 1];
+        size_t cur_neuron_count = LAYER_NEURON_COUNT[i];
+
+        for (int k = 0; k < cur_neuron_count; k++)
         {
-            for (int k = 0; k < prev_neuron_count; k++)
+            result->bias_gradients[i - 1][k] = ca_matrices[i - 1][k];
+            for (int j = 0; j < next_neuron_count; j++)
             {
                 int index = cur_neuron_count * j + k;
-                result->bias_gradients[i - 1][k] = sigmoid_derivative(z_matrices[i][k]) * ca_matrices[i][k];
-                result->weight_gradients[i - 1][index] = activation_matrices[i][k] * result->bias_gradients[i][k];
+                result->weight_gradients[i][index] += activation_matrices[i][k] * ca_matrices[i][j];
+                // if (i == 2) printf("%d %d %d\n", j, k, index);
+                // if (result->weight_gradients[i][index] == 0)
+                // {
+                //     printf("%d,%d,%d : %.10e, %.10e\n", i, j, k, activation_matrices[i][k], ca_matrices[i][j]);
+                // }
             }
         }
     }
+
+    // FILE *fp = fopen("mantap.txt", "w");
+    // for (int i = 0; i < LAYER_COUNT - 1; i++)
+    // {
+    //     for (int j = 0; j < LAYER_NEURON_COUNT[i] * LAYER_NEURON_COUNT[i + 1]; j++)
+    //     {
+    //         fprintf(fp, "%.10e ", result->weight_gradients[i][j]);
+    //     }
+    //     fprintf(fp, "\n");
+    // }
+    // fclose(fp);
 
     for (int i = 0; i < LAYER_COUNT - 1; i++)
     {
         free(ca_matrices[i]);
     }
     free(ca_matrices);
-
-    return result;
 }
 
 void free_backprop_result(backprop_result_t *bp_result)
@@ -193,7 +204,7 @@ void free_backprop_result(backprop_result_t *bp_result)
     free(bp_result);
 }
 
-void apply_backprop_result(nn_parameters_t *nn_parameters, backprop_result_t *bp_result)
+void consume_backprop_result(nn_parameters_t *nn_parameters, backprop_result_t *bp_result)
 {
     for (int i = 0; i < LAYER_COUNT - 1; i++)
     {
@@ -202,12 +213,14 @@ void apply_backprop_result(nn_parameters_t *nn_parameters, backprop_result_t *bp
 
         for (int j = 0; j < weights_size; j++)
         {
-            nn_parameters->weight_matrices[i][j] += bp_result->weight_gradients[i][j];
+            nn_parameters->weight_matrices[i][j] -= LEARNING_RATE * bp_result->weight_gradients[i][j] / MINI_BATCH_SIZE;
+            bp_result->weight_gradients[i][j] = 0;
         }
 
         for (int j = 0; j < bias_size; j++)
         {
-            nn_parameters->bias_matrices[i][j] += bp_result->bias_gradients[i][j];
+            nn_parameters->bias_matrices[i][j] -= LEARNING_RATE * bp_result->bias_gradients[i][j] / MINI_BATCH_SIZE;
+            bp_result->bias_gradients[i][j] = 0;
         }
     }
 }
@@ -219,23 +232,52 @@ double *label_to_expected_result(int label)
     return res;
 }
 
-void print_backprop_result(backprop_result_t *bp_result) {
+void print_backprop_result(backprop_result_t *bp_result)
+{
     FILE *fp = fopen("backprop_result.dat", "w");
-    for (int i = 0; i < LAYER_COUNT-1;i++) {
+    for (int i = 0; i < LAYER_COUNT - 1; i++)
+    {
         size_t bias_size = LAYER_NEURON_COUNT[i + 1];
         size_t weights_size = LAYER_NEURON_COUNT[i] * LAYER_NEURON_COUNT[i + 1];
-        fprintf(fp, "layer %d\n", i+1);
+        fprintf(fp, "layer %d\n", i + 1);
         for (int j = 0; j < weights_size; j++)
         {
-            fprintf(fp, "w:%f\n", bp_result->weight_gradients[i][j]);
+            fprintf(fp, "w:%.10e\n", bp_result->weight_gradients[i][j]);
         }
 
         for (int j = 0; j < bias_size; j++)
         {
-            fprintf(fp, "b:%f\n", bp_result->bias_gradients[i][j]);
+            fprintf(fp, "b:%.10e\n", bp_result->bias_gradients[i][j]);
         }
     }
     fclose(fp);
+}
+
+void shuffle_training_data(double **train_image, int *train_label)
+{
+    for (int i = NUM_TRAIN - 1; i > 0; i--)
+    {
+        int j = rand() % (i + 1);
+
+        double *temp_image = train_image[i];
+        train_image[i] = train_image[j];
+        train_image[j] = temp_image;
+
+        int temp_label = train_label[i];
+        train_label[i] = train_label[j];
+        train_label[j] = temp_label;
+    }
+}
+
+double gaussian_random() {
+    // implementation of box-muller transform
+
+    double u1 = (double)rand() / RAND_MAX;
+    double u2 = (double)rand() / RAND_MAX;
+    
+    double z0 = sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+    
+    return z0;
 }
 
 int main()
@@ -254,36 +296,122 @@ int main()
         size_t weights_size = LAYER_NEURON_COUNT[i] * LAYER_NEURON_COUNT[i + 1];
 
         nn_parameters->weight_matrices[i] = (double *)calloc(weights_size, sizeof(double));
-        for (int j = 0; j < weights_size; j++) nn_parameters->weight_matrices[i][j] = (float)rand()/(float)(RAND_MAX);
+        for (int j = 0; j < weights_size; j++)
+            nn_parameters->weight_matrices[i][j] = gaussianRandom();
         nn_parameters->bias_matrices[i] = (double *)calloc(bias_size, sizeof(double));
-        for (int j = 0; j < bias_size; j++) nn_parameters->bias_matrices[i][j] = (float)rand()/(float)(RAND_MAX);
+        for (int j = 0; j < bias_size; j++)
+            nn_parameters->bias_matrices[i][j] = gaussianRandom();
     }
 
-    for (int i = 0; i < 100; i++)
+    feedforward_result_t *ff_result = (feedforward_result_t *)calloc(1, sizeof(feedforward_result_t));
+
+    ff_result->activation_matrices = (double **)calloc(LAYER_COUNT, sizeof(double *));
+    ff_result->z_matrices = (double **)calloc(LAYER_COUNT, sizeof(double *));
+
+    for (int i = 0; i < LAYER_COUNT; i++)
     {
-        feedforward_result_t *ff_result = feedforward(train_image[i], nn_parameters);
-
-        backprop_result_t *bp_result = backprop(
-            ff_result->activation_matrices,
-            ff_result->z_matrices,
-            nn_parameters->weight_matrices,
-            label_to_expected_result(train_label[i])
-        );
-
-        apply_backprop_result(nn_parameters, bp_result);
-
-        free_feedforward_result(ff_result);
-        free_backprop_result(bp_result);
+        ff_result->activation_matrices[i] = (double *)calloc(LAYER_NEURON_COUNT[i], sizeof(double));
+        ff_result->z_matrices[i] = (double *)calloc(LAYER_NEURON_COUNT[i], sizeof(double));
     }
 
-    // print_backprop_result(bp_result);
+    backprop_result_t *bp_result = (backprop_result_t *)calloc(1, sizeof(backprop_result_t));
 
-    feedforward_result_t *ff_result = feedforward(train_image[0], nn_parameters);
-    for (int i = 0; i < LAYER_NEURON_COUNT[LAYER_COUNT - 1]; i++)
+    bp_result->weight_gradients = (double **)calloc(LAYER_COUNT - 1, sizeof(double *));
+    bp_result->bias_gradients = (double **)calloc(LAYER_COUNT - 1, sizeof(double *));
+
+    for (int i = 0; i < LAYER_COUNT - 1; i++)
     {
-        double d = ff_result->activation_matrices[LAYER_COUNT - 1][i];
-        printf("%d: %f\n", i, d);
+        size_t bias_size = LAYER_NEURON_COUNT[i + 1];
+        size_t weights_size = LAYER_NEURON_COUNT[i] * LAYER_NEURON_COUNT[i + 1];
+
+        bp_result->weight_gradients[i] = (double *)calloc(weights_size, sizeof(double));
+        bp_result->bias_gradients[i] = (double *)calloc(bias_size, sizeof(double));
     }
+
+    for (int e = 0; e < 10; e++)
+    {
+        shuffle_training_data((double **)train_image, train_label);
+
+        int iter = NUM_TRAIN / MINI_BATCH_SIZE;
+        for (int l = 0; l < iter; l++)
+        {
+            for (int i = 0; i < MINI_BATCH_SIZE; i++)
+            {
+                int idx = MINI_BATCH_SIZE * l + i;
+                double expected[LAYER_NEURON_COUNT[LAYER_COUNT - 1]];
+                for (int j = 0; j < LAYER_NEURON_COUNT[LAYER_COUNT - 1]; j++)
+                {
+                    expected[j] = j == train_label[idx] ? 1 : 0;
+                }
+
+                feedforward(train_image[idx], nn_parameters, ff_result);
+
+                backprop(
+                    ff_result->activation_matrices,
+                    ff_result->z_matrices,
+                    nn_parameters->weight_matrices,
+                    expected,
+                    bp_result);
+
+                // if (i == 0)
+                // {
+                //     exit(0);
+                // }
+            }
+            consume_backprop_result(nn_parameters, bp_result);
+        }
+
+        int correct = 0;
+        for (int i = 0; i < NUM_TEST; i++)
+        {
+            feedforward(test_image[i], nn_parameters, ff_result);
+            double max = -10.0;
+            int max_index = -1;
+            for (int i = 0; i < LAYER_NEURON_COUNT[LAYER_COUNT - 1]; i++)
+            {
+                double d = ff_result->activation_matrices[LAYER_COUNT - 1][i];
+                // printf("%d: %f (%d)\n", i, d, train_label[0]);
+                if (d > max)
+                {
+                    max = d;
+                    max_index = i;
+                }
+            }
+            if (test_label[i] == max_index)
+            {
+                correct += 1;
+            }
+        }
+
+        print_backprop_result(bp_result);
+        printf("completed epoch %d, accuracy : %f\n", e + 1, 100.0 * (float)correct / (float)NUM_TEST);
+    }
+
+    int correct = 0;
+    for (int i = 0; i < NUM_TEST; i++)
+    {
+        feedforward(test_image[i], nn_parameters, ff_result);
+        double max = -10.0;
+        int max_index = -1;
+        for (int i = 0; i < LAYER_NEURON_COUNT[LAYER_COUNT - 1]; i++)
+        {
+            double d = ff_result->activation_matrices[LAYER_COUNT - 1][i];
+            // printf("%d: %f (%d)\n", i, d, train_label[0]);
+            if (d > max)
+            {
+                max = d;
+                max_index = i;
+            }
+        }
+        if (test_label[i] == max_index)
+        {
+            correct += 1;
+        }
+    }
+    printf("accuracy: %f\n", 100.0 * (float)correct / (float)NUM_TEST);
+
+    free_feedforward_result(ff_result);
+    free_backprop_result(bp_result);
 
     return 0;
 }
